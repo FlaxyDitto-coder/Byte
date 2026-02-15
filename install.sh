@@ -106,6 +106,34 @@ install_system_packages() {
   fi
 }
 
+install_headless_web_stack() {
+  if need_cmd apt-get; then
+    if need_cmd sudo; then
+      sudo apt-get install -y xvfb x11vnc novnc python3-websockify openbox >/dev/null 2>&1 || true
+    else
+      apt-get install -y xvfb x11vnc novnc python3-websockify openbox >/dev/null 2>&1 || true
+    fi
+  elif need_cmd dnf; then
+    if need_cmd sudo; then
+      sudo dnf install -y xorg-x11-server-Xvfb x11vnc novnc python3-websockify openbox >/dev/null 2>&1 || true
+    else
+      dnf install -y xorg-x11-server-Xvfb x11vnc novnc python3-websockify openbox >/dev/null 2>&1 || true
+    fi
+  elif need_cmd pacman; then
+    if need_cmd sudo; then
+      sudo pacman -Sy --noconfirm xorg-server-xvfb x11vnc novnc websockify openbox >/dev/null 2>&1 || true
+    else
+      pacman -Sy --noconfirm xorg-server-xvfb x11vnc novnc websockify openbox >/dev/null 2>&1 || true
+    fi
+  elif need_cmd zypper; then
+    if need_cmd sudo; then
+      sudo zypper --non-interactive install xvfb-run x11vnc novnc python3-websockify openbox >/dev/null 2>&1 || true
+    else
+      zypper --non-interactive install xvfb-run x11vnc novnc python3-websockify openbox >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
 extract_embedded_source() {
   local out_path="$1"
   local payload
@@ -141,6 +169,8 @@ build_native_executable() {
 
 echo "[1/8] Installing required packages (if possible)..."
 install_system_packages || true
+echo "[1b/8] Installing optional headless web stack (best effort)..."
+install_headless_web_stack || true
 
 echo "[2/8] Locating a shared-library Python for PyInstaller..."
 BUILD_PYTHON="$(choose_build_python || true)"
@@ -186,6 +216,77 @@ echo "[7/8] Creating launcher and desktop entry..."
 cat > "$LAUNCHER" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [[ -z "\${DISPLAY:-}" && -z "\${WAYLAND_DISPLAY:-}" ]]; then
+  if [[ "\${BYTE_HEADLESS_WEB:-1}" != "1" ]]; then
+    echo "No DISPLAY/WAYLAND_DISPLAY found." >&2
+    echo "Headless mode is disabled (BYTE_HEADLESS_WEB!=1)." >&2
+    echo "Set BYTE_HEADLESS_WEB=1 to enable web/VNC mode." >&2
+    exit 1
+  fi
+
+  for cmd in Xvfb x11vnc; do
+    if ! command -v "\$cmd" >/dev/null 2>&1; then
+      echo "Missing '\$cmd' for headless mode. Re-run installer or install it manually." >&2
+      exit 1
+    fi
+  done
+
+  export DISPLAY="\${BYTE_HEADLESS_DISPLAY:-:99}"
+  export XDG_RUNTIME_DIR="\${XDG_RUNTIME_DIR:-/tmp/byte-pet-runtime-\$UID}"
+  mkdir -p "\$XDG_RUNTIME_DIR"
+
+  XVFB_SCREEN="\${BYTE_XVFB_SCREEN:-1280x800x24}"
+  VNC_PORT="\${BYTE_VNC_PORT:-5901}"
+  WEB_PORT="\${BYTE_WEB_PORT:-6080}"
+  NOVNC_DIR="\${BYTE_NOVNC_DIR:-/usr/share/novnc}"
+
+  Xvfb "\$DISPLAY" -screen 0 "\$XVFB_SCREEN" -ac +extension RANDR >/dev/null 2>&1 &
+  XVFB_PID=\$!
+  sleep 0.6
+
+  WM_PID=""
+  if command -v openbox >/dev/null 2>&1; then
+    openbox >/dev/null 2>&1 &
+    WM_PID=\$!
+  elif command -v fluxbox >/dev/null 2>&1; then
+    fluxbox >/dev/null 2>&1 &
+    WM_PID=\$!
+  elif command -v twm >/dev/null 2>&1; then
+    twm >/dev/null 2>&1 &
+    WM_PID=\$!
+  fi
+
+  x11vnc -display "\$DISPLAY" -forever -shared -nopw -localhost -rfbport "\$VNC_PORT" >/dev/null 2>&1 &
+  X11VNC_PID=\$!
+
+  NOVNC_PID=""
+  if command -v novnc_proxy >/dev/null 2>&1; then
+    novnc_proxy --listen "\$WEB_PORT" --vnc "127.0.0.1:\$VNC_PORT" >/dev/null 2>&1 &
+    NOVNC_PID=\$!
+  elif command -v websockify >/dev/null 2>&1 && [[ -d "\$NOVNC_DIR" ]]; then
+    websockify --web "\$NOVNC_DIR" "\$WEB_PORT" "127.0.0.1:\$VNC_PORT" >/dev/null 2>&1 &
+    NOVNC_PID=\$!
+  elif command -v python3 >/dev/null 2>&1 && [[ -d "\$NOVNC_DIR" ]]; then
+    python3 -m websockify --web "\$NOVNC_DIR" "\$WEB_PORT" "127.0.0.1:\$VNC_PORT" >/dev/null 2>&1 &
+    NOVNC_PID=\$!
+  else
+    echo "Warning: noVNC/websockify not found. VNC running on localhost:\$VNC_PORT only." >&2
+  fi
+
+  cleanup_headless() {
+    [[ -n "\${NOVNC_PID:-}" ]] && kill "\$NOVNC_PID" >/dev/null 2>&1 || true
+    kill "\$X11VNC_PID" >/dev/null 2>&1 || true
+    [[ -n "\${WM_PID:-}" ]] && kill "\$WM_PID" >/dev/null 2>&1 || true
+    kill "\$XVFB_PID" >/dev/null 2>&1 || true
+  }
+  trap cleanup_headless EXIT INT TERM
+
+  echo "Byte Pet headless mode is running."
+  echo "Open in browser: http://localhost:\$WEB_PORT/vnc.html?autoconnect=1&resize=scale"
+  echo "In Codespaces, forward port \$WEB_PORT and open that forwarded URL."
+fi
+
 exec "$INSTALL_BIN" "\$@"
 EOF
 chmod +x "$LAUNCHER"
