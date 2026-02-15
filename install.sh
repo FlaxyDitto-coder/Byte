@@ -24,20 +24,70 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+python_has_shared_lib() {
+  local py="$1"
+  "$py" - <<'PY' >/dev/null 2>&1
+import sysconfig
+print("ok" if int(bool(sysconfig.get_config_var("Py_ENABLE_SHARED"))) else "no")
+PY
+}
+
+choose_build_python() {
+  local candidates=()
+
+  if [[ -n "${BYTE_BUILD_PYTHON:-}" ]]; then
+    candidates+=("$BYTE_BUILD_PYTHON")
+  fi
+
+  candidates+=("/usr/bin/python3")
+
+  if need_cmd python3; then
+    candidates+=("$(command -v python3)")
+  fi
+  if need_cmd python; then
+    candidates+=("$(command -v python)")
+  fi
+
+  local seen=":"
+  local c
+  for c in "${candidates[@]}"; do
+    [[ -z "$c" ]] && continue
+
+    if [[ "$c" != /* ]]; then
+      if ! c="$(command -v "$c" 2>/dev/null)"; then
+        continue
+      fi
+    fi
+
+    [[ -x "$c" ]] || continue
+    case "$seen" in
+      *":$c:"*) continue ;;
+      *) seen+="$c:" ;;
+    esac
+
+    if python_has_shared_lib "$c"; then
+      echo "$c"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 install_system_packages() {
   if need_cmd apt-get; then
     if need_cmd sudo; then
       sudo apt-get update
-      sudo apt-get install -y python3 python3-venv python3-tk xdotool espeak-ng
+      sudo apt-get install -y python3 python3-venv python3-dev python3-tk xdotool espeak-ng
     else
       apt-get update
-      apt-get install -y python3 python3-venv python3-tk xdotool espeak-ng
+      apt-get install -y python3 python3-venv python3-dev python3-tk xdotool espeak-ng
     fi
   elif need_cmd dnf; then
     if need_cmd sudo; then
-      sudo dnf install -y python3 python3-pip python3-tkinter xdotool espeak-ng
+      sudo dnf install -y python3 python3-pip python3-devel python3-tkinter xdotool espeak-ng
     else
-      dnf install -y python3 python3-pip python3-tkinter xdotool espeak-ng
+      dnf install -y python3 python3-pip python3-devel python3-tkinter xdotool espeak-ng
     fi
   elif need_cmd pacman; then
     if need_cmd sudo; then
@@ -47,12 +97,12 @@ install_system_packages() {
     fi
   elif need_cmd zypper; then
     if need_cmd sudo; then
-      sudo zypper --non-interactive install python3 python3-pip python3-tk xdotool espeak-ng
+      sudo zypper --non-interactive install python3 python3-pip python3-devel python3-tk xdotool espeak-ng
     else
-      zypper --non-interactive install python3 python3-pip python3-tk xdotool espeak-ng
+      zypper --non-interactive install python3 python3-pip python3-devel python3-tk xdotool espeak-ng
     fi
   else
-    echo "Warning: unsupported package manager. Install manually: python3 python3-venv python3-tk xdotool espeak-ng"
+    echo "Warning: unsupported package manager. Install manually: python3 python3-venv python3-dev python3-tk xdotool espeak-ng"
   fi
 }
 
@@ -68,10 +118,11 @@ extract_embedded_source() {
 
 build_native_executable() {
   local source_file="$1"
+  local build_python="$2"
   local venv_dir="$TMP_DIR/build-venv"
   local build_dir="$TMP_DIR/pyinstaller"
 
-  python3 -m venv "$venv_dir"
+  "$build_python" -m venv "$venv_dir"
   "$venv_dir/bin/python" -m pip install --upgrade pip >/dev/null
   "$venv_dir/bin/python" -m pip install pyinstaller >/dev/null
 
@@ -88,39 +139,50 @@ build_native_executable() {
   echo "$build_dir/dist/$APP_CMD"
 }
 
-echo "[1/7] Installing required packages (if possible)..."
+echo "[1/8] Installing required packages (if possible)..."
 install_system_packages || true
 
-if ! need_cmd python3; then
-  echo "Error: python3 is required to build the native executable."
+echo "[2/8] Locating a shared-library Python for PyInstaller..."
+BUILD_PYTHON="$(choose_build_python || true)"
+if [[ -z "$BUILD_PYTHON" ]]; then
+  echo "Error: no suitable Python found for PyInstaller (shared library required)."
+  echo "Hint: install distro Python and retry, e.g. /usr/bin/python3"
+  echo "Optional: set BYTE_BUILD_PYTHON=/path/to/python3"
   exit 1
 fi
 
-echo "[2/7] Preparing install directories..."
+if ! "$BUILD_PYTHON" -m venv --help >/dev/null 2>&1; then
+  echo "Error: selected Python does not support venv: $BUILD_PYTHON"
+  exit 1
+fi
+
+echo "Using build Python: $BUILD_PYTHON"
+
+echo "[3/8] Preparing install directories..."
 mkdir -p "$INSTALL_DIR" "$BIN_HOME" "$APPS_DIR"
 
-echo "[3/7] Extracting embedded app payload..."
+echo "[4/8] Extracting embedded app payload..."
 SOURCE_FILE="$TMP_DIR/byte_payload.py"
 if ! extract_embedded_source "$SOURCE_FILE"; then
   echo "Error: embedded payload not found in install.sh"
   exit 1
 fi
 
-echo "[4/7] Building native Linux executable for this system..."
-APP_BINARY="$(build_native_executable "$SOURCE_FILE")"
+echo "[5/8] Building native Linux executable for this system..."
+APP_BINARY="$(build_native_executable "$SOURCE_FILE" "$BUILD_PYTHON")"
 if [[ ! -f "$APP_BINARY" ]]; then
   echo "Error: failed to build executable"
   exit 1
 fi
 
-echo "[5/7] Installing executable..."
+echo "[6/8] Installing executable..."
 install -m 755 "$APP_BINARY" "$INSTALL_BIN"
 
 if [[ -f "$SCRIPT_DIR/robot_pet_config.json" && ! -f "$INSTALL_DIR/robot_pet_config.json" ]]; then
   cp "$SCRIPT_DIR/robot_pet_config.json" "$INSTALL_DIR/robot_pet_config.json"
 fi
 
-echo "[6/7] Creating launcher and desktop entry..."
+echo "[7/8] Creating launcher and desktop entry..."
 cat > "$LAUNCHER" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -142,7 +204,7 @@ if need_cmd update-desktop-database; then
   update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
 fi
 
-echo "[7/7] Optional Ollama model pull..."
+echo "[8/8] Optional Ollama model pull..."
 if [[ "${BYTE_SKIP_MODEL_PULL:-0}" == "1" ]]; then
   echo "Skipping Ollama model pull (BYTE_SKIP_MODEL_PULL=1)."
 elif need_cmd ollama; then
@@ -156,6 +218,8 @@ echo "Install complete."
 echo "Run with: $APP_CMD"
 echo "If command not found, add this to your shell rc:"
 echo "export PATH=\"$BIN_HOME:\$PATH\""
+echo "If build-python selection was wrong, rerun with:"
+echo "BYTE_BUILD_PYTHON=/usr/bin/python3 ./install.sh"
 
 exit 0
 __BYTE_SOURCE_B64__
