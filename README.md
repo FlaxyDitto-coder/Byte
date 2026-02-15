@@ -1,31 +1,62 @@
 # Byte Pet
 
-Byte Pet is a desktop robot companion that follows your cursor, animates while walking, and includes a built-in chat panel powered by Ollama.
+Byte Pet is a desktop robot companion that follows your cursor, animates while walking, and includes a built-in Ollama chat panel.
 
 ## Features
 
-- Transparent desktop robot window with motion and idle/walk animations.
-- Robot tracks the mouse cursor and rotates body/head direction while moving.
-- Terminal control menu loop:
-  - `1` / `toggle` to hide/show the pet
+- Transparent desktop robot with idle/walk animations.
+- Mouse-follow movement and directional body/head turning.
+- Built-in customizer (look, scale, opacity, motion, animation).
+- Terminal menu controls:
+  - `1` / `toggle` to hide/show
   - `2` / `open` to open customizer
   - `3` / `quit` to exit
-- Customizer GUI with options for look, size, opacity, movement, and animation behavior.
-- Chat tab with streaming responses from Ollama (`llama3.2:3b` by default).
-- Optional robot TTS for replies.
+- Streaming chat via Ollama (`llama3.2:3b` by default).
+- Optional robot voice replies.
 
-## Distributed Files
+## Important Files
 
-- `Byte.exe` - Windows app
-- `install.sh` - Linux installer
-- `robot_pet_config.json` - saved settings
+- `install.sh` - Linux installer source with embedded app payload.
+- `install.ps1` - self-contained Windows installer source with embedded app payload.
+- `robot_pet_config.json` - settings file (optional; auto-copied on install if present).
 
 ## Quick Start (Windows)
 
-1. Keep `Byte.exe` and `robot_pet_config.json` in the same folder.
-2. Run `Byte.exe`.
+`install.ps1` is self-contained and builds/installs `byte-pet.exe`.
+
+1. Install Python 3 (with `venv` support).
+2. From PowerShell in this folder, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+3. The installer will:
+   - Install Byte Pet to `%LOCALAPPDATA%\byte-pet`
+   - Automatically add `%LOCALAPPDATA%\byte-pet` to your user `PATH`
+   - Open a new `cmd.exe` so `byte-pet` is available immediately
+
+4. In the new `cmd` window, run:
+
+```bat
+byte-pet
+```
+
+If `byte-pet` is not found, run directly:
+
+```bat
+%LOCALAPPDATA%\byte-pet\byte-pet.exe
+```
+
+Optional Python override:
+
+```bat
+set BYTE_BUILD_PYTHON=C:\Path\To\python.exe && powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
 
 ## Quick Start (Linux)
+
+`install.sh` builds a native executable for the current Linux system and installs it.
 
 ```bash
 chmod +x install.sh
@@ -38,49 +69,72 @@ Then launch:
 byte-pet
 ```
 
-If `byte-pet` is not found, add this to your shell profile:
+If not found:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+## Headless / VM / Codespaces (Linux)
+
+When no GUI display is detected, the launcher can run Byte Pet in a virtual display and expose it via VNC/noVNC.
+
+- Default behavior without `DISPLAY`/`WAYLAND_DISPLAY`: headless web mode is enabled.
+- noVNC URL:
+  - `http://localhost:6080/vnc.html?autoconnect=1&resize=scale`
+- In Codespaces, forward port `6080` and open the forwarded URL.
+
+Useful variables:
+
+- `BYTE_HEADLESS_WEB=1` enable headless web mode.
+- `BYTE_HEADLESS_WEB=0` disable it.
+- `BYTE_WEB_PORT=6080` noVNC port.
+- `BYTE_VNC_PORT=5901` VNC backend port.
+- `BYTE_HEADLESS_DISPLAY=:99` virtual display id.
+- `BYTE_XVFB_SCREEN=1280x800x24` virtual screen size/depth.
+
 ## Ollama Chat Setup
 
 1. Install and run Ollama.
 2. Ensure endpoint is reachable at `http://127.0.0.1:11434/api/chat`.
-3. The app uses model `llama3.2:3b` and will try to pull it if missing.
+3. Installer/app use model `llama3.2:3b` by default.
 
-To use a different endpoint:
+Change endpoint:
 
 ```bash
 export OLLAMA_CHAT_URL="http://127.0.0.1:11434/api/chat"
 ```
 
-PowerShell:
-
 ```powershell
 $env:OLLAMA_CHAT_URL = "http://127.0.0.1:11434/api/chat"
 ```
 
-## Mouse + App Controls
+Skip automatic model pull during install:
 
-- Left mouse drag on Byte: move Byte manually.
-- Double left click on Byte: pause/resume following.
-- Right click on Byte: open customizer.
-- Keep terminal open to use menu commands while app runs.
+```bash
+BYTE_SKIP_MODEL_PULL=1 ./install.sh
+```
 
-## Notes
+```bat
+set BYTE_SKIP_MODEL_PULL=1 && powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
 
-- Chat streaming is enabled.
-- Settings are saved in `robot_pet_config.json`.
-- On non-Windows systems, speech output may depend on system voice tools.
+## Controls
+
+- Left-drag Byte: move manually.
+- Double left-click: pause/resume following.
+- Right-click: open customizer.
+- Keep terminal open to use the menu loop while app runs.
 
 ## Troubleshooting
 
+- `install.ps1` blocked by execution policy:
+  - Run: `powershell -ExecutionPolicy Bypass -File .\install.ps1`
+- Python build errors on Windows:
+  - Install Python 3 and rerun.
+  - Set `BYTE_BUILD_PYTHON` to a known-good interpreter.
 - `Ollama unavailable`:
-  - Start Ollama service and confirm `http://127.0.0.1:11434` is reachable.
+  - Start Ollama and verify `http://127.0.0.1:11434` is reachable.
 - No chat response:
-  - Check model availability: `ollama list`
-  - Pull model manually: `ollama pull llama3.2:3b`
-- `byte-pet: command not found` (Linux):
-  - Add `~/.local/bin` to `PATH` and restart shell.
+  - `ollama list`
+  - `ollama pull llama3.2:3b`
