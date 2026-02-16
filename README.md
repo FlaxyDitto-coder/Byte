@@ -25,6 +25,13 @@ Byte Pet is a desktop robot companion that follows your cursor, animates while w
 `install.ps1` is self-contained and builds/installs `byte-pet.exe`.
 
 1. Install Python 3 (with `venv` support).
+   Shortcut:
+
+```powershell
+winget install -e --id Python.Python.3.12
+```
+
+After install, open a new terminal.
 2. From PowerShell in this folder, run:
 
 ```powershell
@@ -57,6 +64,22 @@ set BYTE_BUILD_PYTHON=C:\Path\To\python.exe && powershell -ExecutionPolicy Bypas
 ## Quick Start (Linux)
 
 `install.sh` builds a native executable for the current Linux system and installs it.
+
+Python 3 shortcut (pick one):
+
+```bash
+# Ubuntu / Debian
+sudo apt-get update && sudo apt-get install -y python3 python3-venv python3-dev python3-tk
+
+# Fedora
+sudo dnf install -y python3 python3-pip python3-devel python3-tkinter
+
+# Arch
+sudo pacman -Sy --noconfirm python python-pip tk
+
+# openSUSE
+sudo zypper --non-interactive install python3 python3-pip python3-devel python3-tk
+```
 
 ```bash
 chmod +x install.sh
